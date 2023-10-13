@@ -1,3 +1,5 @@
+asgiref
+aiohttp
 bidict==0.22.1
 blinker==1.6.2
 certifi==2023.7.22

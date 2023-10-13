@@ -9,7 +9,7 @@ from args import parse_args
 cfg = parse_args()
 
 app = Flask(__name__)
-socketio = SocketIO(app)
+socketio = SocketIO(app, async_handlers=True)
 msg_lst = []
 
 
