@@ -1,9 +1,0 @@
-master_ip : "10.5.0.2"
-master_port: "7000"
-
-slaves_port: ["8000", "9000"]
-slaves_ips: ["10.5.0.3", "10.5.0.4"]
-
-sleep_duration_sec: 4
-
-log_level: "DEBUG"
