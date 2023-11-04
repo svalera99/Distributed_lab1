@@ -1,5 +1,5 @@
 import sys
-from threading import Thread
+from collections import OrderedDict
 
 from loguru import logger
 import numpy as np
@@ -7,30 +7,31 @@ from sanic import Sanic, json
 import socketio
 
 from args import parse_args
+from utils import append_msg
 
 cfg = parse_args()
 
 sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
 app = Sanic(f"slave_{cfg['slave_id']}_app")
 sio.attach(app)
-msg_lst = []
+msg_dct = OrderedDict()
 
 
 @app.get("/")
 async def get_lst(_):
-    return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in enumerate(msg_lst)])
+    return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in msg_dct.items()])
 
 
 @sio.on('append_msg')
 async def append_msg_handler(sid, data):
     logger.debug(f'Received message {data} sid is {sid}')
 
-    wait_time = cfg["sleep_duration_sec"] + np.random.choice([-1, 1])
+    wait_time = cfg["sleep_duration_sec"] + np.random.randint(-3, 3)
     logger.debug(f'Waiting for {wait_time}')
     await sio.sleep(wait_time)
 
-    msg_lst.append(data)
-    logger.debug(f"Appended message {data}")
+    append_msg(data, msg_dct)
+    logger.debug(f"Appended message {data['msg']} with index {data['msg_idx']}")
     await sio.emit('appended')
 
 

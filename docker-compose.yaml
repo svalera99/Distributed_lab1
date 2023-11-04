@@ -1,17 +1,49 @@
-version: "3"
-
-volumes:
-  postgresql-db:
+version: '3.5'
 
 services:
-  database:
-    image: postgres:15
+  master:
+    image: slave_master:latest
     ports:
-      - "5432:5432"
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: dev
+      - "7000:7000"
     volumes:
-      - postgresql-db:/var/lib/postgresql/data
+      - ${PWD}:/dir
+    command: bash -c "cd /dir && python3 master.py"
+    networks:
+      servers_net:
+        ipv4_address: 10.5.0.2
+
+  slave1:
+    image: slave_master:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${PWD}:/dir
+    command: bash -c "cd /dir && python3 slave.py --slave_id 0"
+    networks:
+      servers_net:
+        ipv4_address: 10.5.0.3
+    links:
+      - master
+
+  slave2:
+    image: slave_master:latest
+    ports:
+      - "9000:9000"
+    volumes:
+      - ${PWD}:/dir
+    command: bash -c "cd /dir && python3 slave.py --slave_id 1"
+    networks:
+      servers_net:
+        ipv4_address: 10.5.0.4
+    links:
+      - master
+
+
+
+networks:
+  servers_net:
+    external: false
+    name: servers_net
+    ipam:
+      config:
+          - subnet: 10.5.0.0/16
