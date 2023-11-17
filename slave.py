@@ -4,10 +4,11 @@ from collections import OrderedDict
 from loguru import logger
 import numpy as np
 from sanic import Sanic, json
+from sanic.response import text
 import socketio
 
 from args import parse_args
-from utils import append_msg
+from utils import append_msg, all_messages_received
 
 cfg = parse_args()
 
@@ -19,6 +20,7 @@ msg_dct = OrderedDict()
 
 @app.get("/")
 async def get_lst(_):
+    await all_messages_received(msg_dct)
     return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in msg_dct.items()])
 
 
@@ -26,11 +28,12 @@ async def get_lst(_):
 async def append_msg_handler(sid, data):
     logger.debug(f'Received message {data} sid is {sid}')
 
-    wait_time = cfg["sleep_duration_sec"] + np.random.randint(-3, 3)
+    wait_time = cfg["sleep_duration_sec"] + np.random.randint(-4, 4)
     logger.debug(f'Waiting for {wait_time}')
     await sio.sleep(wait_time)
 
     append_msg(data, msg_dct)
+
     logger.debug(f"Appended message {data['msg']} with index {data['msg_idx']}")
     await sio.emit('appended')
 
