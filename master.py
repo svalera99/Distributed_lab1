@@ -87,7 +87,11 @@ async def put_lst(request):
         )
         for slave_ip, slave_port in zip(cfg["slaves_ips"], cfg["slaves_port"])
     ]
-    await latch.wait()
+
+    if concerns > 0:
+        await latch.wait()
+    else:
+        await asyncio.sleep(2)
 
     logger.debug(f'Whole function lasted for {time() - ts}\n')
     return text("200")
