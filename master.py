@@ -1,26 +1,24 @@
 import sys
 from time import time
-from typing import Dict
 from collections import OrderedDict
 
 from loguru import logger
 from sanic import Sanic, json
 from sanic.response import text
 import socketio
-from socketio.exceptions import TimeoutError, ConnectionError
 import asyncio
-from asyncio.exceptions import TimeoutError as ASYNC_TimeoutError
 
-from args import cfg
-from utils import (
+from utils.args import cfg
+from utils.utils import (
     append_msg, 
     all_messages_received,
-    get_ith_timeout
 )
-from count_down_latch import CountDownLatch
+from utils.count_down_latch import CountDownLatch
+from utils.send import communicate_with_slave
 
 sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
 app = Sanic(f"master_app")
+sio.attach(app)
 
 msg_dct = OrderedDict()
 msg_idx = 0
@@ -32,94 +30,6 @@ latch = CountDownLatch()
 async def get_lst(_):
     await all_messages_received(msg_dct)
     return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in msg_dct.items()])
-
-
-async def communicate_with_slave(
-    slave_ip: str,
-    slave_port: str,
-    data: Dict
-):
-    wait_inx = 0
-    starting_time = time()
-
-    while timeout_condition := (time() - starting_time) < cfg["connection_timeout"]:
-        try:
-            await asyncio.wait_for(
-                send_msg(slave_ip, slave_port, data),
-                timeout=cfg["connection_timeout"]
-            )
-            return 0
-        except ConnectionError:
-            next_waiting_time = get_ith_timeout(wait_inx)
-            wait_inx += 1
-            if timeout_condition := (time() - starting_time) < cfg["connection_timeout"]:
-                logger.error((
-                    f"Couldn't connect to slave {slave_ip}:{slave_port};"
-                    f"Retrying in {next_waiting_time}"
-                ))
-                await asyncio.sleep(next_waiting_time)
-                continue
-        except ASYNC_TimeoutError:
-            logger.error((
-                f"Connection to {slave_ip}:{slave_port} was established;"
-                f"But no results was recieved in {cfg['connection_timeout']} seconds"
-            ))
-
-    logger.error(f"Couldn't connect to slave {slave_ip}:{slave_port}; Abort")
-    await latch.add_failed_task()
-    await latch.release_if_m_failed()
-
-
-async def send_msg(
-    slave_ip: str,
-    slave_port: str,
-    data: Dict
-):
-    async with socketio.AsyncSimpleClient(request_timeout=1) as sio:
-        await sio.connect("http://" + slave_ip + ":" + slave_port)
-        await sio.emit('append_msg', data)
-
-        sent_time = time()
-        try:
-            event = await sio.receive()
-            if event != ["appended"]:
-                raise ValueError
-            await latch.coroutine_done()
-            await latch.release_if_n_acquired()
-        except TimeoutError:
-            logger.error(f'Timed out waiting for ACK from slave on port {slave_port}')
-        except ValueError:
-            logger.error(f"Wrong ACK received from slave on port {slave_port}; recieved - {event}")
-        else:
-            duration = time() - sent_time
-            logger.debug(f'Wrote data {data} to slave ip with port {slave_port}, duration of the coroutine - {duration}')
-
-
-async def delete_msg_from_slave(
-    slave_ip: str,
-    slave_port: str,
-    data: Dict
-):
-
-    async with socketio.AsyncSimpleClient(request_timeout=1) as sio:
-        await sio.connect("http://" + slave_ip + ":" + slave_port)
-        await sio.emit('delete_msg', data)
-
-        sent_time = time()
-        try:
-            event = await sio.receive()
-            if event != ["deleted"]:
-                raise ValueError
-            await latch.coroutine_done()
-            await latch.release_if_n_acquired()
-        except TimeoutError:
-            logger.error(f'Timed out waiting for delete ACK from slave on port {slave_port}')
-        except ValueError:
-            logger.error(f"Wrong delete ACK received from slave on port {slave_port}; recieved - {event}")
-        else:
-            duration = time() - sent_time
-            logger.debug(f'Deleted data {data} from slave ip with port {slave_port}, duration of the coroutine - {duration}')
-
 
 
 @app.route("/", methods=['POST'])
@@ -152,7 +62,8 @@ async def put_lst(request):
             communicate_with_slave(
                 slave_ip, 
                 slave_port, 
-                data
+                data,
+                latch
             )
         )
         for slave_ip, slave_port in zip(cfg["slaves_ips"], cfg["slaves_port"])
@@ -177,13 +88,31 @@ async def put_lst(request):
         return text("500")
 
 
+@sio.on('sync_msg')
+async def synchronize_slave_msgs(sid: int, slave_msg_dct: OrderedDict):
+    logger.debug(f'Received msgs {slave_msg_dct} sid is {sid}; Synchronizing')
+
+
+    global msg_dct
+    common_keys = set(list(slave_msg_dct.keys())).intersection(set(list(msg_dct.keys())))
+    logger.debug(f"Updating common keys - {common_keys}")
+    for key in common_keys:
+        slave_msg_dct[key] = msg_dct[key]
+
+    new_keys = set(list(msg_dct.keys())).difference(list(set(slave_msg_dct.keys())))
+    logger.debug(f"Setting new keys common keys - {new_keys}")
+    for key in new_keys:
+        slave_msg_dct[key] = msg_dct[key]
+
+    await sio.emit('sync_msg', slave_msg_dct)
+
 
 def main():
     logger.remove()
     logger.add(sys.stdout, level=cfg["log_level"])
     logger.add("logs.log", level=cfg["log_level"], backtrace=True, diagnose=True)
 
-    app.run(host=cfg["master_ip"], port=int(cfg["master_port"]), debug=True)
+    app.run(host=cfg["master_ip"], port=int(cfg["master_port"]))
 
 
 if __name__ == "__main__":

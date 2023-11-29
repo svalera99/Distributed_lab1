@@ -7,7 +7,7 @@ slaves_ips: ["10.5.0.3", "10.5.0.4"]
 
 delivery_failure:
   kind: "server_unavailable" # server_unavailable, internal_loping
-  servers_dead: [False, True]
+  servers_dead: [False, False]
   looping_sec: [0, 7] # for each server
 
 
