@@ -14,3 +14,4 @@ def parse_args():
     cfg_content["slave_id"] = cfg["slave_id"]
     return cfg_content
 
+cfg = parse_args()

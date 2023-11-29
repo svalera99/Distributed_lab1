@@ -7,14 +7,17 @@ from loguru import logger
 from sanic import Sanic, json
 from sanic.response import text
 import socketio
-from socketio.exceptions import TimeoutError
+from socketio.exceptions import TimeoutError, ConnectionError
 import asyncio
+from asyncio.exceptions import TimeoutError as ASYNC_TimeoutError
 
-from args import parse_args
-from utils import append_msg, all_messages_received
+from args import cfg
+from utils import (
+    append_msg, 
+    all_messages_received,
+    get_ith_timeout
+)
 from count_down_latch import CountDownLatch
-
-cfg = parse_args()
 
 sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
 app = Sanic(f"master_app")
@@ -23,6 +26,7 @@ msg_dct = OrderedDict()
 msg_idx = 0
 
 latch = CountDownLatch()
+
 
 @app.get("/")
 async def get_lst(_):
@@ -35,7 +39,43 @@ async def communicate_with_slave(
     slave_port: str,
     data: Dict
 ):
-    async with socketio.AsyncSimpleClient() as sio:
+    wait_inx = 0
+    starting_time = time()
+
+    while timeout_condition := (time() - starting_time) < cfg["connection_timeout"]:
+        try:
+            await asyncio.wait_for(
+                send_msg(slave_ip, slave_port, data),
+                timeout=cfg["connection_timeout"]
+            )
+            return 0
+        except ConnectionError:
+            next_waiting_time = get_ith_timeout(wait_inx)
+            wait_inx += 1
+            if timeout_condition := (time() - starting_time) < cfg["connection_timeout"]:
+                logger.error((
+                    f"Couldn't connect to slave {slave_ip}:{slave_port};"
+                    f"Retrying in {next_waiting_time}"
+                ))
+                await asyncio.sleep(next_waiting_time)
+                continue
+        except ASYNC_TimeoutError:
+            logger.error((
+                f"Connection to {slave_ip}:{slave_port} was established;"
+                f"But no results was recieved in {cfg['connection_timeout']} seconds"
+            ))
+
+    logger.error(f"Couldn't connect to slave {slave_ip}:{slave_port}; Abort")
+    await latch.add_failed_task()
+    await latch.release_if_m_failed()
+
+
+async def send_msg(
+    slave_ip: str,
+    slave_port: str,
+    data: Dict
+):
+    async with socketio.AsyncSimpleClient(request_timeout=1) as sio:
         await sio.connect("http://" + slave_ip + ":" + slave_port)
         await sio.emit('append_msg', data)
 
@@ -53,6 +93,33 @@ async def communicate_with_slave(
         else:
             duration = time() - sent_time
             logger.debug(f'Wrote data {data} to slave ip with port {slave_port}, duration of the coroutine - {duration}')
+
+
+async def delete_msg_from_slave(
+    slave_ip: str,
+    slave_port: str,
+    data: Dict
+):
+
+    async with socketio.AsyncSimpleClient(request_timeout=1) as sio:
+        await sio.connect("http://" + slave_ip + ":" + slave_port)
+        await sio.emit('delete_msg', data)
+
+        sent_time = time()
+        try:
+            event = await sio.receive()
+            if event != ["deleted"]:
+                raise ValueError
+            await latch.coroutine_done()
+            await latch.release_if_n_acquired()
+        except TimeoutError:
+            logger.error(f'Timed out waiting for delete ACK from slave on port {slave_port}')
+        except ValueError:
+            logger.error(f"Wrong delete ACK received from slave on port {slave_port}; recieved - {event}")
+        else:
+            duration = time() - sent_time
+            logger.debug(f'Deleted data {data} from slave ip with port {slave_port}, duration of the coroutine - {duration}')
+
 
 
 @app.route("/", methods=['POST'])
@@ -75,7 +142,10 @@ async def put_lst(request):
     msg_idx += 1
 
     await latch.reset()
-    latch.set_n_coroutines(concerns)
+    latch.set_parameters(
+        n_to_wait_for=concerns,
+        n_total=len(cfg["slaves_ips"])
+    )
     logger.debug(f"Current latch state - {latch.get_latch_state()}")
     tasks = [
         asyncio.create_task(
@@ -93,8 +163,19 @@ async def put_lst(request):
     else:
         await asyncio.sleep(2)
 
-    logger.debug(f'Whole function lasted for {time() - ts}\n')
-    return text("200")
+    if latch.has_completed_sucessfuly():
+        logger.debug((
+            f'Whole function lasted for {time() - ts}\n'
+            "SUCCESS\n"
+        ))
+        return text("200")
+    else:
+        logger.debug((
+            f"Writing to slave nodes failed, total {latch.get_failed_tasks()}; "
+            f"writes failed {time() - ts}\n"
+        ))
+        return text("500")
+
 
 
 def main():

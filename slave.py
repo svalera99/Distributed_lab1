@@ -4,13 +4,10 @@ from collections import OrderedDict
 from loguru import logger
 import numpy as np
 from sanic import Sanic, json
-from sanic.response import text
 import socketio
 
-from args import parse_args
+from args import cfg
 from utils import append_msg, all_messages_received
-
-cfg = parse_args()
 
 sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
 app = Sanic(f"slave_{cfg['slave_id']}_app")
@@ -24,9 +21,21 @@ async def get_lst(_):
     return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in msg_dct.items()])
 
 
+async def emulate_transmition_failure():
+    looping_kind = cfg["delivery_failure"]["kind"]
+    if looping_kind == "server_unavailable" and \
+        cfg["delivery_failure"]["servers_dead"][cfg["slave_id"]]:
+
+        app.stop()
+    elif looping_kind == "internal_loping":
+        await sio.sleep(cfg["delivery_failure"][cfg["slave_id"]])
+
+
 @sio.on('append_msg')
 async def append_msg_handler(sid, data):
     logger.debug(f'Received message {data} sid is {sid}')
+
+    await emulate_transmition_failure()
 
     wait_time = cfg["sleep_duration_sec"] + np.random.randint(-4, 4)
     logger.debug(f'Waiting for {wait_time}')

@@ -26,3 +26,7 @@ async def all_messages_received(msg_dct: OrderedDict):
     else:
         logger.debug(f"Still waiting for some messages to arrive till index {len(msg_indexes)}")
         return False
+    
+
+def get_ith_timeout(i):
+    return 2 ** i
