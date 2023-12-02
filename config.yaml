@@ -11,6 +11,11 @@ delivery_failure:
   looping_sec: [0, 7] # for each server
 
 
+heartbeat_seconds: 3
+
+enforce_quorum: True
+suspend_on_slaves_dead: True
+
 sleep_duration_sec: 5
 
 connection_timeout: 10

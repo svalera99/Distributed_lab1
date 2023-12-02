@@ -1,3 +1,25 @@
+# Updates for lab3
+
+1. When slave server starts it automatically resynchronizes with master.
+In configs there is "delivery_failure" configs, if should either
+automatically turn off slave of make it sleep for a while.
+
+2. Retries are implemeneted with sockets in func send/communicate_with_slave
+They are unlimited and retries happend with delay as power of two.
+Timeout - "connection_timeout"
+
+3. Deduplication and total order is reached by simply storing index.
+
+4. Heartbeats are implemented with sockets. I create a background
+task for sanic server and it sends hearbeats to slaves every "heartbeat_seconds".
+Config parameter "suspend_on_slaves_dead" makes that master don't attempt to
+send msg to slaves if the nunber of concerns is more than alive slaves.
+
+5. Quorum is controlled by "suspend_on_slaves_dead". In case of one master and
+two slaves, if both slaves are dead then post requests will be turned off.
+
+
+
 # Steps to reproduce
 
 You can use my lab with running master, slave1, slave2 in separate
@@ -57,3 +79,6 @@ I use simple increasing index to ensure message total ordering and use
 that same index to not append messages if they are duplicated.  
 I've decided to migrate from flask to Sanic on slave servers
 because it gives better debug options and overall pretier.
+
+
+

@@ -1,17 +1,18 @@
 import sys
 from collections import OrderedDict
+from time import sleep, time
 
-from time import time, sleep
-from loguru import logger
 import numpy as np
-from sanic import Sanic, json
 import socketio
+from loguru import logger
+from sanic import Sanic, json
 from socketio.exceptions import ConnectionError
 
 from utils.args import cfg
-from utils.utils import append_msg, all_messages_received
+from utils.namespaces import Namespaces
+from utils.utils import all_messages_received, append_msg
 
-sio = socketio.AsyncServer(async_mode='sanic', cors_allowed_origins=[])
+sio = socketio.AsyncServer(async_mode="sanic", cors_allowed_origins=[])
 app = Sanic(f"slave_{cfg['slave_id']}_app")
 sio.attach(app)
 msg_dct = OrderedDict()
@@ -20,33 +21,44 @@ msg_dct = OrderedDict()
 @app.get("/")
 async def get_lst(_):
     await all_messages_received(msg_dct)
-    return json([f"Message number - {msg_inx}, message - {msg}" for msg_inx, msg in msg_dct.items()])
+    return json(
+        [
+            f"Message number - {msg_inx}, message - {msg}"
+            for msg_inx, msg in msg_dct.items()
+        ]
+    )
 
 
 async def emulate_transmition_failure():
     looping_kind = cfg["delivery_failure"]["kind"]
-    if looping_kind == "server_unavailable" and \
-        cfg["delivery_failure"]["servers_dead"][cfg["slave_id"]]:
-
+    if (
+        looping_kind == "server_unavailable"
+        and cfg["delivery_failure"]["servers_dead"][cfg["slave_id"]]
+    ):
         app.stop()
     elif looping_kind == "internal_loping":
         await sio.sleep(cfg["delivery_failure"][cfg["slave_id"]])
 
 
-@sio.on('append_msg')
+@sio.on("is_alive", namespace=Namespaces.HEART_BEAT)
+async def server_is_alive(sid, data=None):
+    await sio.emit("is_alive", namespace=Namespaces.HEART_BEAT)
+
+
+@sio.on("append_msg", namespace=Namespaces.SEND)
 async def append_msg_handler(sid, data):
-    logger.debug(f'Received message {data} sid is {sid}')
+    logger.debug(f"Received message {data} sid is {sid}")
 
     await emulate_transmition_failure()
 
     wait_time = cfg["sleep_duration_sec"] + np.random.randint(-4, 4)
-    logger.debug(f'Waiting for {wait_time}')
+    logger.debug(f"Waiting for {wait_time}")
     await sio.sleep(wait_time)
 
     append_msg(data, msg_dct)
 
     logger.debug(f"Appended message {data['msg']} with index {data['msg_idx']}")
-    await sio.emit('appended')
+    await sio.emit("appended", namespace=Namespaces.SEND)
 
 
 @app.listener("before_server_start")
@@ -56,8 +68,11 @@ def synchronize(app, loop):
         logger.debug("Starting sync process")
         with socketio.SimpleClient() as sio:
             try:
-                sio.connect("http://" + cfg["master_ip"] + ":" + cfg["master_port"])
-                sio.emit('sync_msg', msg_dct)
+                sio.connect(
+                    "http://" + cfg["master_ip"] + ":" + cfg["master_port"],
+                    namespace=Namespaces.SYNC,
+                )
+                sio.emit("sync_msg", msg_dct)
 
                 sent_time = time()
 
@@ -81,7 +96,9 @@ def synchronize(app, loop):
                 )
                 sleep(5)
             except ValueError:
-                logger.error(f"Wrong message received, expected sync_msg; Got - {msg_name}")
+                logger.error(
+                    f"Wrong message received, expected sync_msg; Got - {msg_name}"
+                )
                 sleep(5)
             else:
                 duration = time() - sent_time
@@ -90,6 +107,7 @@ def synchronize(app, loop):
                     f"New value of msgs - {msg_dct}"
                 )
                 break
+
 
 def main():
     logger.remove()

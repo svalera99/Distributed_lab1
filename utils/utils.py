@@ -1,5 +1,5 @@
-from typing import Dict
 from collections import OrderedDict
+from typing import Dict
 
 from loguru import logger
 
@@ -15,7 +15,9 @@ def append_msg(data: Dict, msg_dct: OrderedDict):
 async def all_messages_received(msg_dct: OrderedDict):
     msg_indexes = list(msg_dct.keys())
     if msg_indexes:
-        messaged_received = (msg_indexes == list(range(msg_indexes[0], msg_indexes[-1]+1)))
+        messaged_received = msg_indexes == list(
+            range(msg_indexes[0], msg_indexes[-1] + 1)
+        )
     else:
         messaged_received = True
 
@@ -23,10 +25,11 @@ async def all_messages_received(msg_dct: OrderedDict):
         logger.debug(f"All messages up to index {len(msg_indexes)} were received")
         return True
     else:
-        logger.debug(f"Still waiting for some messages to arrive till index {len(msg_indexes)}")
+        logger.debug(
+            f"Still waiting for some messages to arrive till index {len(msg_indexes)}"
+        )
         return False
-    
-    
+
 
 def get_ith_timeout(i):
-    return 2 ** i
+    return 2**i
